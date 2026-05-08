@@ -1,0 +1,9 @@
+{
+    "name": "UpgradeLimiter",
+    "version_number": "0.1.0",
+    "website_url": "https://github.com/darkharasho/upgrade-limiter",
+    "description": "Caps how many of each player upgrade can be stacked. Configurable per upgrade.",
+    "dependencies": [
+        "BepInEx-BepInExPack-5.4.2100"
+    ]
+}

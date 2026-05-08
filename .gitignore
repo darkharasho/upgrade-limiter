@@ -1,8 +1,18 @@
-node_modules
+# Build output
+bin/
+obj/
+*.zip
+
+# Rider / VS
+.idea/
+.vs/
+*.user
+
+# Environment
 .env
-.env.*
-.DS_Store
-dist
-build
-*.log
+
+# Thunderstore (icon.png must be user-supplied, not versioned)
+*.png
+
+# Superpowers
 .superpowers
