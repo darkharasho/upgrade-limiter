@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Prepopulate config sections for all 13 base-game upgrades, including ones not yet auto-discoverable via `StatsManager` reflection (CrouchRest, GrabThrow, TumbleClimb, TumbleWings, MapPlayerCount).
+- Unpaired canonical entries appear in the config but log a warning that the cap won't enforce until the game exposes a matching method/dict.
+
 ## 0.1.0
 
 - Initial release.
