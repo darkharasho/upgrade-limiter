@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Add `DeathHeadBattery` and `MapPlayerCount` to the base map. Both methods drop the `Player` infix on `PunManager` (`UpgradeDeathHeadBattery` / `UpgradeMapPlayerCount`) so the previous `UpgradePlayer*`-only filter missed them.
+- Modded scan now matches any `Upgrade*` method with the right signature instead of `UpgradePlayer*`. The IL-scan still gates on whether the method touches a `StatsManager` `Dictionary<string,int>` field, so non-upgrade methods are filtered out automatically.
+
 ## 0.4.1
 
 - Fix: clients were not enforcing the host's synced cap. REPOConfig's autosave fires `SettingChanged` repeatedly, and the handler unconditionally wrote `ActiveEnabled = Enabled.Value`, clobbering the value pulled from host's Photon room properties. While a client is in a room, local config changes no longer override the synced runtime value. The local config is restored on room-leave (existing `ResetActiveToLocal`).

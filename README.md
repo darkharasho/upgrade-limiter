@@ -7,7 +7,7 @@ When a player tries to consume an upgrade past the cap, the upgrade crystal is c
 ## Features
 
 - Per-upgrade `Enabled` toggle and `MaxStacks` value (0–99)
-- Covers all 11 base-game player upgrades (Health, Energy, ExtraJump, TumbleLaunch, TumbleClimb, TumbleWings, SprintSpeed, CrouchRest, GrabStrength, ThrowStrength, GrabRange)
+- Covers all 13 base-game player upgrades (Health, Energy, ExtraJump, TumbleLaunch, TumbleClimb, TumbleWings, SprintSpeed, CrouchRest, GrabStrength, ThrowStrength, GrabRange, DeathHeadBattery, MapPlayerCount)
 - Modded `UpgradePlayer*` methods are auto-discovered via IL scanning and added to the config
 - Host-to-client sync via Photon room properties — only the host needs to configure caps
 - Live config reload: changing limits mid-run takes effect on the next pickup, no level reload needed

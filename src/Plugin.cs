@@ -38,17 +38,20 @@ namespace UpgradeLimiter
         // mapping is hardcoded.
         private static readonly (string Name, string MethodName, string DictField)[] BaseMap =
         {
-            ("Health",         "UpgradePlayerHealth",         "playerUpgradeHealth"),
-            ("Energy",         "UpgradePlayerEnergy",         "playerUpgradeStamina"),
-            ("ExtraJump",      "UpgradePlayerExtraJump",      "playerUpgradeExtraJump"),
-            ("TumbleLaunch",   "UpgradePlayerTumbleLaunch",   "playerUpgradeLaunch"),
-            ("TumbleClimb",    "UpgradePlayerTumbleClimb",    "playerUpgradeTumbleClimb"),
-            ("TumbleWings",    "UpgradePlayerTumbleWings",    "playerUpgradeTumbleWings"),
-            ("SprintSpeed",    "UpgradePlayerSprintSpeed",    "playerUpgradeSpeed"),
-            ("CrouchRest",     "UpgradePlayerCrouchRest",     "playerUpgradeCrouchRest"),
-            ("GrabStrength",   "UpgradePlayerGrabStrength",   "playerUpgradeStrength"),
-            ("ThrowStrength",  "UpgradePlayerThrowStrength",  "playerUpgradeThrow"),
-            ("GrabRange",      "UpgradePlayerGrabRange",      "playerUpgradeRange"),
+            ("Health",            "UpgradePlayerHealth",         "playerUpgradeHealth"),
+            ("Energy",            "UpgradePlayerEnergy",         "playerUpgradeStamina"),
+            ("ExtraJump",         "UpgradePlayerExtraJump",      "playerUpgradeExtraJump"),
+            ("TumbleLaunch",      "UpgradePlayerTumbleLaunch",   "playerUpgradeLaunch"),
+            ("TumbleClimb",       "UpgradePlayerTumbleClimb",    "playerUpgradeTumbleClimb"),
+            ("TumbleWings",       "UpgradePlayerTumbleWings",    "playerUpgradeTumbleWings"),
+            ("SprintSpeed",       "UpgradePlayerSprintSpeed",    "playerUpgradeSpeed"),
+            ("CrouchRest",        "UpgradePlayerCrouchRest",     "playerUpgradeCrouchRest"),
+            ("GrabStrength",      "UpgradePlayerGrabStrength",   "playerUpgradeStrength"),
+            ("ThrowStrength",     "UpgradePlayerThrowStrength",  "playerUpgradeThrow"),
+            ("GrabRange",         "UpgradePlayerGrabRange",      "playerUpgradeRange"),
+            // Two upgrades on PunManager that drop the "Player" infix.
+            ("DeathHeadBattery",  "UpgradeDeathHeadBattery",     "playerUpgradeDeathHeadBattery"),
+            ("MapPlayerCount",    "UpgradeMapPlayerCount",       "playerUpgradeMapPlayerCount"),
         };
 
         public static void Discover()
@@ -119,7 +122,7 @@ namespace UpgradeLimiter
                     foreach (var m in methods)
                     {
                         if (seen.Contains(m)) continue;
-                        if (!m.Name.StartsWith("UpgradePlayer", StringComparison.Ordinal)) continue;
+                        if (!m.Name.StartsWith("Upgrade", StringComparison.Ordinal)) continue;
                         if (m.ReturnType != typeof(int)) continue;
                         var ps = m.GetParameters();
                         if (ps.Length != 2) continue;
@@ -128,11 +131,15 @@ namespace UpgradeLimiter
                         var dict = FindDictField(m, statsManager);
                         if (dict == null)
                         {
-                            Plugin.Log.LogWarning($"[Discover] Modded {type.FullName}.{m.Name} — no StatsManager dict touched, skipping.");
+                            // No upgrade dict touched — not an upgrade method, skip silently.
                             continue;
                         }
 
-                        var name = m.Name.Substring("UpgradePlayer".Length);
+                        // Strip the longer prefix when present so the friendly name stays clean.
+                        var stripped = m.Name.StartsWith("UpgradePlayer", StringComparison.Ordinal)
+                            ? m.Name.Substring("UpgradePlayer".Length)
+                            : m.Name.Substring("Upgrade".Length);
+                        var name = stripped;
                         // Avoid colliding with a base-map entry name.
                         if (Entries.Exists(e => e.Name == name)) name = type.Name + "_" + name;
 
