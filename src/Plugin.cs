@@ -108,6 +108,19 @@ namespace UpgradeLimiter
 
             var harmony = new Harmony("darkharasho.UpgradeLimiter");
             harmony.PatchAll();
+            var prefix = new HarmonyMethod(typeof(CapPrefix).GetMethod(nameof(CapPrefix.Prefix)));
+            foreach (var e in UpgradeRegistry.Entries)
+            {
+                try
+                {
+                    harmony.Patch(e.Method, prefix: prefix);
+                    Log.LogInfo($"[Patch] Installed cap prefix on {e.Method.Name}");
+                }
+                catch (System.Exception ex)
+                {
+                    Log.LogError($"[Patch] Failed to patch {e.Method.Name}: {ex.GetType().Name} {ex.Message}");
+                }
+            }
 
             Log.LogInfo($"UpgradeLimiter v{PluginInfo.PLUGIN_VERSION} loaded.");
         }
@@ -140,6 +153,33 @@ namespace UpgradeLimiter
                 e.ActiveEnabled = e.Enabled.Value;
                 e.ActiveMax = e.MaxStacks.Value;
             }
+        }
+    }
+
+    internal static class CapPrefix
+    {
+        // Harmony invokes this with __originalMethod and the steamID arg of the patched method.
+        // Returning false skips the original increment (the cap is hit). Returning true lets it run.
+        public static bool Prefix(string steamID, MethodBase __originalMethod)
+        {
+            if (!UpgradeRegistry.ByMethod.TryGetValue(__originalMethod, out var entry)) return true;
+            if (!entry.ActiveEnabled) return true;
+
+            var smType = AccessTools.TypeByName("StatsManager");
+            var smInstanceField = smType != null ? AccessTools.Field(smType, "instance") : null;
+            var sm = smInstanceField?.GetValue(null);
+            if (sm == null) return true;
+
+            var dict = entry.CountField.GetValue(sm) as System.Collections.Generic.IDictionary<string, int>;
+            if (dict == null) return true;
+
+            if (!dict.TryGetValue(steamID, out int current)) current = 0;
+            if (current >= entry.ActiveMax)
+            {
+                Plugin.Log.LogDebug($"[Cap] {entry.Name} for {steamID} blocked at {current}/{entry.ActiveMax}");
+                return false;
+            }
+            return true;
         }
     }
 }
