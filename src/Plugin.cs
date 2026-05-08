@@ -278,12 +278,18 @@ namespace UpgradeLimiter
                 var entry = e;
                 entry.Enabled.SettingChanged += (_, _) =>
                 {
+                    // While we're a client in a room, ActiveEnabled is host-owned via
+                    // Photon sync — don't let local config changes (or REPOConfig
+                    // autosave spam, which fires SettingChanged repeatedly) clobber
+                    // the synced value. ResetActiveToLocal restores on room-leave.
+                    if (Photon.Pun.PhotonNetwork.InRoom && !Photon.Pun.PhotonNetwork.IsMasterClient) return;
                     entry.ActiveEnabled = entry.Enabled.Value;
                     if (Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.IsMasterClient)
                         SettingsSyncer.Instance?.PushHostSettingsExternal();
                 };
                 entry.MaxStacks.SettingChanged += (_, _) =>
                 {
+                    if (Photon.Pun.PhotonNetwork.InRoom && !Photon.Pun.PhotonNetwork.IsMasterClient) return;
                     entry.ActiveMax = entry.MaxStacks.Value;
                     if (Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.IsMasterClient)
                         SettingsSyncer.Instance?.PushHostSettingsExternal();

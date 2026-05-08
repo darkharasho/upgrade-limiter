@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Fix: clients were not enforcing the host's synced cap. REPOConfig's autosave fires `SettingChanged` repeatedly, and the handler unconditionally wrote `ActiveEnabled = Enabled.Value`, clobbering the value pulled from host's Photon room properties. While a client is in a room, local config changes no longer override the synced runtime value. The local config is restored on room-leave (existing `ResetActiveToLocal`).
+
 ## 0.4.0
 
 - Compatibility: SharedUpgradesPlus and similar mods that distribute upgrades via direct dict writes (e.g. `UpdateStatRPC` → `StatsManager.DictionaryUpdateValue`) now respect the cap. Added a clamp prefix on `DictionaryUpdateValue` that limits the absolute value to `ActiveMax` whenever the target dict matches a tracked upgrade. Vanilla shared upgrades (which route through `TesterUpgradeCommandRPC` → `PunManager.UpgradePlayer*`) were already covered by the existing prefix.

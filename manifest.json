@@ -1,6 +1,6 @@
 {
     "name": "UpgradeLimiter",
-    "version_number": "0.4.0",
+    "version_number": "0.4.1",
     "website_url": "https://github.com/darkharasho/upgrade-limiter",
     "description": "Caps how many of each player upgrade can be stacked. Configurable per upgrade.",
     "dependencies": [
