@@ -26,26 +26,25 @@ namespace UpgradeLimiter
         internal static readonly List<UpgradeEntry> Entries = new();
         internal static readonly Dictionary<MethodBase, UpgradeEntry> ByMethod = new();
 
-        // Canonical base-game upgrades — names match the post-prefix-strip output of discovery
-        // (so they line up with config sections when discovery succeeds). These are bound in
-        // the config regardless of whether discovery pairs them with an enforceable method+dict;
-        // for unpaired entries the section still appears so the user can see + configure them,
-        // but the cap won't enforce until a future game version exposes the matching method/dict.
-        internal static readonly string[] CanonicalUpgrades =
+        // Base-game upgrades. Methods live on PunManager with signature
+        // `int UpgradePlayer*(string _steamID, int value = 1)`; the matching
+        // count dict lives on StatsManager. Names don't follow a derivable
+        // pattern (Energy↔Stamina, SprintSpeed↔Speed, GrabStrength↔Strength,
+        // GrabRange↔Range, TumbleLaunch↔Launch, ThrowStrength↔Throw), so the
+        // mapping is hardcoded.
+        private static readonly (string Name, string MethodName, string DictField)[] BaseMap =
         {
-            "PlayerHealth",
-            "PlayerEnergy",
-            "PlayerSpeed",
-            "PlayerSprintSpeed",
-            "PlayerExtraJump",
-            "PlayerGrabStrength",
-            "PlayerGrabRange",
-            "PlayerGrabThrow",
-            "PlayerTumbleLaunch",
-            "PlayerTumbleClimb",
-            "PlayerTumbleWings",
-            "PlayerCrouchRest",
-            "PlayerMapPlayerCount",
+            ("Health",         "UpgradePlayerHealth",         "playerUpgradeHealth"),
+            ("Energy",         "UpgradePlayerEnergy",         "playerUpgradeStamina"),
+            ("ExtraJump",      "UpgradePlayerExtraJump",      "playerUpgradeExtraJump"),
+            ("TumbleLaunch",   "UpgradePlayerTumbleLaunch",   "playerUpgradeLaunch"),
+            ("TumbleClimb",    "UpgradePlayerTumbleClimb",    "playerUpgradeTumbleClimb"),
+            ("TumbleWings",    "UpgradePlayerTumbleWings",    "playerUpgradeTumbleWings"),
+            ("SprintSpeed",    "UpgradePlayerSprintSpeed",    "playerUpgradeSpeed"),
+            ("CrouchRest",     "UpgradePlayerCrouchRest",     "playerUpgradeCrouchRest"),
+            ("GrabStrength",   "UpgradePlayerGrabStrength",   "playerUpgradeStrength"),
+            ("ThrowStrength",  "UpgradePlayerThrowStrength",  "playerUpgradeThrow"),
+            ("GrabRange",      "UpgradePlayerGrabRange",      "playerUpgradeRange"),
         };
 
         public static void Discover()
@@ -53,82 +52,136 @@ namespace UpgradeLimiter
             Entries.Clear();
             ByMethod.Clear();
 
-            // Step 1: reflection scan → local dict keyed by upgrade name
-            var discovered = new Dictionary<string, (MethodInfo Method, FieldInfo CountField)>(StringComparer.Ordinal);
+            var punManager = AccessTools.TypeByName("PunManager");
+            var statsManager = AccessTools.TypeByName("StatsManager");
 
-            var sm = AccessTools.TypeByName("StatsManager");
-            if (sm == null)
+            if (punManager == null) Plugin.Log.LogError("[Discover] PunManager not found — base entries unenforceable.");
+            if (statsManager == null) Plugin.Log.LogError("[Discover] StatsManager not found — base entries unenforceable.");
+
+            var seen = new HashSet<MethodInfo>();
+
+            foreach (var (name, methodName, fieldName) in BaseMap)
             {
-                Plugin.Log.LogError("[Discover] StatsManager type not found — all canonical entries unenforceable.");
-            }
-            else
-            {
-                const BindingFlags BF = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                MethodInfo? method = null;
+                FieldInfo? field = null;
+                if (punManager != null)
+                    method = AccessTools.Method(punManager, methodName, new[] { typeof(string), typeof(int) });
+                if (statsManager != null)
+                    field = AccessTools.Field(statsManager, fieldName);
 
-                var dictFields = new Dictionary<string, FieldInfo>();
-                foreach (var f in sm.GetFields(BF))
+                if (method == null) Plugin.Log.LogWarning($"[Discover] {methodName} not on PunManager — {name} cap won't enforce.");
+                if (field == null) Plugin.Log.LogWarning($"[Discover] {fieldName} not on StatsManager — {name} cap won't enforce.");
+
+                var entry = new UpgradeEntry { Name = name, Method = method, CountField = field };
+                if (method != null && field != null)
                 {
-                    if (!typeof(System.Collections.IDictionary).IsAssignableFrom(f.FieldType)) continue;
-                    var args = f.FieldType.IsGenericType ? f.FieldType.GetGenericArguments() : null;
-                    if (args == null || args.Length != 2) continue;
-                    if (args[0] != typeof(string) || args[1] != typeof(int)) continue;
-                    dictFields[f.Name.ToLowerInvariant()] = f;
-                }
-
-                foreach (var m in sm.GetMethods(BF))
-                {
-                    if (m.ReturnType != typeof(void)) continue;
-                    var ps = m.GetParameters();
-                    if (ps.Length != 1 || ps[0].ParameterType != typeof(string)) continue;
-
-                    string? upgradeName = null;
-                    if (m.Name.StartsWith("UpgradePlayer", StringComparison.Ordinal))
-                        upgradeName = m.Name.Substring("UpgradePlayer".Length);
-                    else if (m.Name.StartsWith("PlayerUpgrade", StringComparison.Ordinal))
-                        upgradeName = m.Name.Substring("PlayerUpgrade".Length);
-                    if (string.IsNullOrEmpty(upgradeName)) continue;
-
-                    var key = ("playerUpgrade" + upgradeName).ToLowerInvariant();
-                    if (!dictFields.TryGetValue(key, out var dictField))
-                    {
-                        Plugin.Log.LogWarning($"[Discover] {m.Name} has no matching dictionary {key} — skipping.");
-                        continue;
-                    }
-
-                    discovered[upgradeName] = (m, dictField);
-                    Plugin.Log.LogInfo($"[Discover] {m.Name} ↔ {dictField.Name}");
-                }
-            }
-
-            // Step 2: emit canonical entries in canonical order
-            var canonicalSet = new HashSet<string>(CanonicalUpgrades, StringComparer.Ordinal);
-            foreach (var name in CanonicalUpgrades)
-            {
-                UpgradeEntry entry;
-                if (discovered.TryGetValue(name, out var pair))
-                {
-                    entry = new UpgradeEntry { Name = name, Method = pair.Method, CountField = pair.CountField };
-                    ByMethod[pair.Method] = entry;
-                }
-                else
-                {
-                    entry = new UpgradeEntry { Name = name };
-                    Plugin.Log.LogWarning($"[Discover] Canonical upgrade {name} not found — config bound but cap won't enforce.");
+                    ByMethod[method] = entry;
+                    seen.Add(method);
+                    Plugin.Log.LogInfo($"[Discover] {methodName} ↔ {fieldName}");
                 }
                 Entries.Add(entry);
             }
 
-            // Step 3: add any discovered upgrades not in the canonical list
-            foreach (var kvp in discovered)
-            {
-                if (canonicalSet.Contains(kvp.Key)) continue;
-                var entry = new UpgradeEntry { Name = kvp.Key, Method = kvp.Value.Method, CountField = kvp.Value.CountField };
-                ByMethod[kvp.Value.Method] = entry;
-                Entries.Add(entry);
-                Plugin.Log.LogInfo($"[Discover] Non-canonical {kvp.Key} added to config.");
-            }
+            if (statsManager != null)
+                ScanModded(statsManager, seen);
 
             Plugin.Log.LogInfo($"[Discover] {Entries.Count} entries total ({ByMethod.Count} enforceable).");
+        }
+
+        // Walk loaded assemblies for additional `int UpgradePlayer*(string, int)`
+        // methods (e.g. modded upgrades that follow the base-game convention).
+        // For each, IL-scan the body to find which Dictionary<string,int> field
+        // on StatsManager it touches — that's the count we'll cap against.
+        private static void ScanModded(Type statsManager, HashSet<MethodInfo> seen)
+        {
+            const BindingFlags BF = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { types = ex.Types ?? Array.Empty<Type>(); }
+                catch { continue; }
+
+                foreach (var type in types)
+                {
+                    if (type == null) continue;
+                    MethodInfo[] methods;
+                    try { methods = type.GetMethods(BF); }
+                    catch { continue; }
+
+                    foreach (var m in methods)
+                    {
+                        if (seen.Contains(m)) continue;
+                        if (!m.Name.StartsWith("UpgradePlayer", StringComparison.Ordinal)) continue;
+                        if (m.ReturnType != typeof(int)) continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length != 2) continue;
+                        if (ps[0].ParameterType != typeof(string) || ps[1].ParameterType != typeof(int)) continue;
+
+                        var dict = FindDictField(m, statsManager);
+                        if (dict == null)
+                        {
+                            Plugin.Log.LogWarning($"[Discover] Modded {type.FullName}.{m.Name} — no StatsManager dict touched, skipping.");
+                            continue;
+                        }
+
+                        var name = m.Name.Substring("UpgradePlayer".Length);
+                        // Avoid colliding with a base-map entry name.
+                        if (Entries.Exists(e => e.Name == name)) name = type.Name + "_" + name;
+
+                        var entry = new UpgradeEntry { Name = name, Method = m, CountField = dict };
+                        ByMethod[m] = entry;
+                        seen.Add(m);
+                        Entries.Add(entry);
+                        Plugin.Log.LogInfo($"[Discover] Modded {type.FullName}.{m.Name} ↔ {dict.Name} as {name}");
+                    }
+                }
+            }
+        }
+
+        // Scan a method's IL for ldfld/stfld instructions referencing a
+        // Dictionary<string,int> field on StatsManager. Returns the first one.
+        // We scan every byte position rather than walking opcodes properly —
+        // ResolveField validates the token, and our field-type/declaring-type
+        // predicate filters out stray matches.
+        private static FieldInfo? FindDictField(MethodInfo method, Type statsManager)
+        {
+            MethodBody? body;
+            try { body = method.GetMethodBody(); }
+            catch { return null; }
+            if (body == null) return null;
+            var il = body.GetILAsByteArray();
+            if (il == null || il.Length < 5) return null;
+
+            var module = method.Module;
+            var dictType = typeof(Dictionary<string, int>);
+            Type[]? typeArgs = null;
+            Type[]? methArgs = null;
+            try
+            {
+                if (method.DeclaringType?.IsGenericType == true)
+                    typeArgs = method.DeclaringType.GetGenericArguments();
+                if (method.IsGenericMethod)
+                    methArgs = method.GetGenericArguments();
+            }
+            catch { }
+
+            for (int i = 0; i <= il.Length - 5; i++)
+            {
+                byte op = il[i];
+                // ldfld 0x7B, ldflda 0x7C, stfld 0x7D, ldsfld 0x7E, stsfld 0x80
+                if (op != 0x7B && op != 0x7C && op != 0x7D && op != 0x7E && op != 0x80) continue;
+                int token = BitConverter.ToInt32(il, i + 1);
+                FieldInfo? field;
+                try { field = module.ResolveField(token, typeArgs, methArgs); }
+                catch { continue; }
+                if (field == null) continue;
+                if (field.DeclaringType != statsManager) continue;
+                if (field.FieldType != dictType) continue;
+                return field;
+            }
+            return null;
         }
     }
 
@@ -180,7 +233,7 @@ namespace UpgradeLimiter
             var range = new AcceptableValueRange<int>(0, 99);
             foreach (var e in UpgradeRegistry.Entries)
             {
-                string section = "Limits." + e.Name;
+                string section = e.Name;
                 e.Enabled = Config.Bind(section, "Enabled", false,
                     $"Enable the cap for the {e.Name} upgrade. When false, the upgrade behaves vanilla.");
                 e.MaxStacks = Config.Bind(section, "MaxStacks", 5,
@@ -317,26 +370,29 @@ namespace UpgradeLimiter
 
     internal static class CapPrefix
     {
-        // Harmony invokes this with __originalMethod and the steamID arg of the patched method.
-        // Returning false skips the original increment (the cap is hit). Returning true lets it run.
-        public static bool Prefix(string steamID, MethodBase __originalMethod)
+        // Harmony binds prefix params by name, so `_steamID` and `value` must
+        // match the original (PunManager.UpgradePlayer*(string _steamID, int value = 1)).
+        // Returning false skips the original increment.
+        public static bool Prefix(string _steamID, int value, MethodBase __originalMethod)
         {
             if (!UpgradeRegistry.ByMethod.TryGetValue(__originalMethod, out var entry)) return true;
             if (!entry.ActiveEnabled) return true;
             if (entry.CountField == null) return true;
+            // Only cap upward stacking — let decrements / resets through.
+            if (value <= 0) return true;
 
             var smType = AccessTools.TypeByName("StatsManager");
             var smInstanceField = smType != null ? AccessTools.Field(smType, "instance") : null;
             var sm = smInstanceField?.GetValue(null);
             if (sm == null) return true;
 
-            var dict = entry.CountField.GetValue(sm) as System.Collections.Generic.IDictionary<string, int>;
+            var dict = entry.CountField.GetValue(sm) as IDictionary<string, int>;
             if (dict == null) return true;
 
-            if (!dict.TryGetValue(steamID, out int current)) current = 0;
-            if (current >= entry.ActiveMax)
+            if (!dict.TryGetValue(_steamID, out int current)) current = 0;
+            if (current + value > entry.ActiveMax)
             {
-                Plugin.Log.LogDebug($"[Cap] {entry.Name} for {steamID} blocked at {current}/{entry.ActiveMax}");
+                Plugin.Log.LogDebug($"[Cap] {entry.Name} for {_steamID} blocked: {current}+{value} > {entry.ActiveMax}");
                 return false;
             }
             return true;

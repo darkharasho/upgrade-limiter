@@ -2,26 +2,58 @@
 
 A R.E.P.O. mod that caps how many of each player upgrade can be stacked. Each upgrade has its own enable toggle and max-stacks value.
 
-When a player tries to consume an upgrade past the cap, the upgrade item is consumed normally (the crystal disappears) but the stat does not increase.
+When a player tries to consume an upgrade past the cap, the upgrade crystal is consumed normally but the stat does not increase. Decrements and resets pass through unchanged.
+
+## Features
+
+- Per-upgrade `Enabled` toggle and `MaxStacks` value (0–99)
+- Covers all 11 base-game player upgrades (Health, Energy, ExtraJump, TumbleLaunch, TumbleClimb, TumbleWings, SprintSpeed, CrouchRest, GrabStrength, ThrowStrength, GrabRange)
+- Modded `UpgradePlayer*` methods are auto-discovered via IL scanning and added to the config
+- Host-to-client sync via Photon room properties — only the host needs to configure caps
+- Live config reload: changing limits mid-run takes effect on the next pickup, no level reload needed
+- Compatible with [REPOConfig](https://thunderstore.io/c/repo/p/nickklmao/REPOConfig/) — adjust settings in-game
 
 ## Configuration
 
-The config file is generated at `BepInEx/config/darkharasho.UpgradeLimiter.cfg` on first launch. It contains one section per upgrade discovered on `StatsManager` plus a sync section.
+Config file: `BepInEx/config/darkharasho.UpgradeLimiter.cfg`
+
+Each upgrade gets its own section:
+
+```
+[Health]
+Enabled = false
+MaxStacks = 5
+
+[SprintSpeed]
+Enabled = true
+MaxStacks = 2
+```
+
+| Key | Default | Range | Description |
+|-----|---------|-------|-------------|
+| `Enabled` | `false` | — | When true, the upgrade is capped. When false, it behaves vanilla. |
+| `MaxStacks` | `5` | `0–99` | Maximum stacks of this upgrade per player. `0` blocks every pickup (effectively disables the upgrade). |
+
+Plus a sync section:
 
 ```
 [Sync]
-SyncToClients = true   # Host-only: push limits to all clients via Photon room properties.
-
-[Limits.Health]
-Enabled = false
-MaxStacks = 5
+SyncToClients = true
 ```
 
-`MaxStacks = 0` with `Enabled = true` blocks every increment for that upgrade — equivalent to disabling the upgrade entirely.
+When `SyncToClients = true`, the host pushes its caps to every client via Photon room properties and clients ignore their own local caps while in the room. When `false`, each client uses its own local config.
 
 ## Multiplayer
 
-When the host has `SyncToClients = true`, every client in the room uses the host's caps regardless of their own config. When the host has `SyncToClients = false`, each client uses its own local config.
+The cap is enforced on the host's authoritative state, so toggling caps on a client without host sync will not actually limit the upgrade — only the host's settings matter for enforcement.
+
+## Dependencies
+
+- [BepInExPack](https://thunderstore.io/c/repo/p/BepInEx/BepInExPack/)
+
+## Installation
+
+Install via [Thunderstore Mod Manager](https://www.overwolf.com/app/Thunderstore-Thunderstore_Mod_Manager) / r2modman, or manually place `UpgradeLimiter.dll` in `BepInEx/plugins/UpgradeLimiter/`.
 
 ## Building
 
@@ -29,4 +61,4 @@ When the host has `SyncToClients = true`, every client in the room uses the host
 GAME_DIR="/path/to/REPO" ./package.sh
 ```
 
-This builds the DLL, deploys it into your r2modman profile (`R2_PROFILE` env var, default `Default`), and produces a Thunderstore-ready zip if `icon.png` is present.
+Builds the DLL and produces a Thunderstore-ready zip. Install the zip via r2modman.
