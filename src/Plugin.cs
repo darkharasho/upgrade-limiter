@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 
@@ -9,9 +10,15 @@ namespace UpgradeLimiter
 {
     internal class UpgradeEntry
     {
-        public string Name = "";              // e.g. "Health"
-        public MethodInfo Method = null!;     // StatsManager.UpgradePlayerHealth(string)
-        public FieldInfo CountField = null!;  // StatsManager.playerUpgradeHealth (Dictionary<string,int>)
+        public string Name = "";
+        public MethodInfo Method = null!;
+        public FieldInfo CountField = null!;
+        public ConfigEntry<bool> Enabled = null!;
+        public ConfigEntry<int> MaxStacks = null!;
+
+        // Runtime-active values. Equal to local config when not synced; overwritten by host pull.
+        public bool ActiveEnabled;
+        public int ActiveMax;
     }
 
     internal static class UpgradeRegistry
@@ -85,14 +92,54 @@ namespace UpgradeLimiter
     public class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log = null!;
+        internal static ConfigEntry<bool> SyncToClients = null!;
 
         private void Awake()
         {
             Log = Logger;
+
+            SyncToClients = Config.Bind("Sync", "SyncToClients", true,
+                "Host-only. When true, the host pushes its limits to every client via Photon room properties. " +
+                "When false, the host never publishes; each client uses its own local config.");
+
             UpgradeRegistry.Discover();
+            BindUpgradeConfigs();
+            ResetActiveToLocal();
+
             var harmony = new Harmony("darkharasho.UpgradeLimiter");
             harmony.PatchAll();
+
             Log.LogInfo($"UpgradeLimiter v{PluginInfo.PLUGIN_VERSION} loaded.");
+        }
+
+        private void BindUpgradeConfigs()
+        {
+            var range = new AcceptableValueRange<int>(0, 99);
+            foreach (var e in UpgradeRegistry.Entries)
+            {
+                string section = "Limits." + e.Name;
+                e.Enabled = Config.Bind(section, "Enabled", false,
+                    $"Enable the cap for the {e.Name} upgrade. When false, the upgrade behaves vanilla.");
+                e.MaxStacks = Config.Bind(section, "MaxStacks", 5,
+                    new ConfigDescription(
+                        $"Maximum number of {e.Name} upgrades a single player may stack. " +
+                        "0 means no further upgrades can be picked up.",
+                        range));
+
+                // Capture loop variable for the lambda.
+                var entry = e;
+                entry.Enabled.SettingChanged += (_, _) => entry.ActiveEnabled = entry.Enabled.Value;
+                entry.MaxStacks.SettingChanged += (_, _) => entry.ActiveMax = entry.MaxStacks.Value;
+            }
+        }
+
+        internal static void ResetActiveToLocal()
+        {
+            foreach (var e in UpgradeRegistry.Entries)
+            {
+                e.ActiveEnabled = e.Enabled.Value;
+                e.ActiveMax = e.MaxStacks.Value;
+            }
         }
     }
 }
