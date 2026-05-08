@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- Compatibility: SharedUpgradesPlus and similar mods that distribute upgrades via direct dict writes (e.g. `UpdateStatRPC` → `StatsManager.DictionaryUpdateValue`) now respect the cap. Added a clamp prefix on `DictionaryUpdateValue` that limits the absolute value to `ActiveMax` whenever the target dict matches a tracked upgrade. Vanilla shared upgrades (which route through `TesterUpgradeCommandRPC` → `PunManager.UpgradePlayer*`) were already covered by the existing prefix.
+
 ## 0.3.1
 
 - Config sections renamed from `Limits.Player*` to bare upgrade names (`Health`, `SprintSpeed`, etc.) so the in-game REPOConfig header doesn't truncate. Existing 0.3.0 settings will be orphaned — re-toggle once.

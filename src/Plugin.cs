@@ -25,6 +25,10 @@ namespace UpgradeLimiter
     {
         internal static readonly List<UpgradeEntry> Entries = new();
         internal static readonly Dictionary<MethodBase, UpgradeEntry> ByMethod = new();
+        // Reverse lookup keyed by the StatsManager dict field name. Used by the
+        // DictionaryUpdateValue prefix to clamp shared/RPC writes (e.g. from
+        // SharedUpgradesPlus's distribution path which bypasses PunManager).
+        internal static readonly Dictionary<string, UpgradeEntry> ByDictName = new(StringComparer.Ordinal);
 
         // Base-game upgrades. Methods live on PunManager with signature
         // `int UpgradePlayer*(string _steamID, int value = 1)`; the matching
@@ -51,6 +55,7 @@ namespace UpgradeLimiter
         {
             Entries.Clear();
             ByMethod.Clear();
+            ByDictName.Clear();
 
             var punManager = AccessTools.TypeByName("PunManager");
             var statsManager = AccessTools.TypeByName("StatsManager");
@@ -79,6 +84,7 @@ namespace UpgradeLimiter
                     seen.Add(method);
                     Plugin.Log.LogInfo($"[Discover] {methodName} ↔ {fieldName}");
                 }
+                if (field != null) ByDictName[field.Name] = entry;
                 Entries.Add(entry);
             }
 
@@ -132,6 +138,7 @@ namespace UpgradeLimiter
 
                         var entry = new UpgradeEntry { Name = name, Method = m, CountField = dict };
                         ByMethod[m] = entry;
+                        ByDictName[dict.Name] = entry;
                         seen.Add(m);
                         Entries.Add(entry);
                         Plugin.Log.LogInfo($"[Discover] Modded {type.FullName}.{m.Name} ↔ {dict.Name} as {name}");
@@ -223,6 +230,31 @@ namespace UpgradeLimiter
                 {
                     Log.LogError($"[Patch] Failed to patch {e.Method.Name}: {ex.GetType().Name} {ex.Message}");
                 }
+            }
+
+            // Second-line cap: clamp direct dict writes (e.g. SharedUpgradesPlus's
+            // modded distribution path, which goes through UpdateStatRPC → DictionaryUpdateValue
+            // and bypasses our PunManager.UpgradePlayer* prefix).
+            var smType = AccessTools.TypeByName("StatsManager");
+            var dictUpdate = smType != null
+                ? AccessTools.Method(smType, "DictionaryUpdateValue", new[] { typeof(string), typeof(string), typeof(int) })
+                : null;
+            if (dictUpdate != null)
+            {
+                try
+                {
+                    var clamp = new HarmonyMethod(typeof(DictUpdateClampPrefix).GetMethod(nameof(DictUpdateClampPrefix.Prefix)));
+                    harmony.Patch(dictUpdate, prefix: clamp);
+                    Log.LogInfo("[Patch] Installed clamp prefix on StatsManager.DictionaryUpdateValue");
+                }
+                catch (System.Exception ex)
+                {
+                    Log.LogError($"[Patch] Failed to patch DictionaryUpdateValue: {ex.GetType().Name} {ex.Message}");
+                }
+            }
+            else
+            {
+                Log.LogWarning("[Patch] StatsManager.DictionaryUpdateValue not found — shared/RPC clamp disabled.");
             }
 
             Log.LogInfo($"UpgradeLimiter v{PluginInfo.PLUGIN_VERSION} loaded.");
@@ -365,6 +397,23 @@ namespace UpgradeLimiter
                 if (props.ContainsKey(km) && props[km] is int mi) { e.ActiveMax = mi; any = true; }
             }
             if (any) Plugin.Log.LogInfo("[Sync] Pulled host upgrade-limit settings from room properties");
+        }
+    }
+
+    // Catches paths that bypass PunManager.UpgradePlayer* and write directly
+    // to a StatsManager dict — most importantly SharedUpgradesPlus's modded
+    // upgrade distribution (UpdateStatRPC → DictionaryUpdateValue), but also
+    // any future mod or game code that calls UpdateStat/DictionaryUpdateValue
+    // for an upgrade dict. Clamps the absolute value to ActiveMax.
+    internal static class DictUpdateClampPrefix
+    {
+        public static void Prefix(string dictionaryName, string key, ref int value)
+        {
+            if (!UpgradeRegistry.ByDictName.TryGetValue(dictionaryName, out var entry)) return;
+            if (!entry.ActiveEnabled) return;
+            if (value <= entry.ActiveMax) return;
+            Plugin.Log.LogDebug($"[Cap] {entry.Name} for {key} clamped {value} → {entry.ActiveMax} (DictionaryUpdateValue)");
+            value = entry.ActiveMax;
         }
     }
 
