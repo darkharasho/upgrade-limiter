@@ -63,11 +63,6 @@ namespace UpgradeLimiter
                     upgradeName = m.Name.Substring("PlayerUpgrade".Length);
                 if (string.IsNullOrEmpty(upgradeName)) continue;
 
-                if (upgradeName.Contains("Set") || upgradeName.Contains("Load") ||
-                    upgradeName.Contains("Get") || upgradeName.Contains("Apply") ||
-                    upgradeName.Contains("Sync"))
-                    continue;
-
                 var key = ("playerUpgrade" + upgradeName).ToLowerInvariant();
                 if (!dictFields.TryGetValue(key, out var dictField))
                 {
@@ -230,7 +225,6 @@ namespace UpgradeLimiter
                 // Photon doesn't expose a clean "delete key" API short of setting null, which most
                 // SDK versions accept. If a stale key persists, clients will keep using their last
                 // pull; acceptable degradation.
-                Plugin.ResetActiveToLocal();
                 return;
             }
 
@@ -248,7 +242,6 @@ namespace UpgradeLimiter
                 changed = true;
             }
 
-            Plugin.ResetActiveToLocal();
             if (!changed) return;
 
             Photon.Pun.PhotonNetwork.CurrentRoom.SetCustomProperties(props);
@@ -265,8 +258,8 @@ namespace UpgradeLimiter
             {
                 string ke = "UL_" + e.Name + "_E";
                 string km = "UL_" + e.Name + "_M";
-                if (props.ContainsKey(ke)) { e.ActiveEnabled = (bool)props[ke]; any = true; }
-                if (props.ContainsKey(km)) { e.ActiveMax = (int)props[km]; any = true; }
+                if (props.ContainsKey(ke) && props[ke] is bool be) { e.ActiveEnabled = be; any = true; }
+                if (props.ContainsKey(km) && props[km] is int mi) { e.ActiveMax = mi; any = true; }
             }
             if (any) Plugin.Log.LogInfo("[Sync] Pulled host upgrade-limit settings from room properties");
         }
