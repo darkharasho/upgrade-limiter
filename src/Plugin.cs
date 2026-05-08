@@ -106,6 +106,11 @@ namespace UpgradeLimiter
             BindUpgradeConfigs();
             ResetActiveToLocal();
 
+            gameObject.AddComponent<SettingsSyncer>();
+
+            // Host-side: when SyncToClients toggles or any limit changes mid-game, re-push.
+            SyncToClients.SettingChanged += (_, _) => SettingsSyncer.Instance?.PushHostSettingsExternal();
+
             var harmony = new Harmony("darkharasho.UpgradeLimiter");
             harmony.PatchAll();
             var prefix = new HarmonyMethod(typeof(CapPrefix).GetMethod(nameof(CapPrefix.Prefix)));
@@ -141,8 +146,18 @@ namespace UpgradeLimiter
 
                 // Capture loop variable for the lambda.
                 var entry = e;
-                entry.Enabled.SettingChanged += (_, _) => entry.ActiveEnabled = entry.Enabled.Value;
-                entry.MaxStacks.SettingChanged += (_, _) => entry.ActiveMax = entry.MaxStacks.Value;
+                entry.Enabled.SettingChanged += (_, _) =>
+                {
+                    entry.ActiveEnabled = entry.Enabled.Value;
+                    if (Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.IsMasterClient)
+                        SettingsSyncer.Instance?.PushHostSettingsExternal();
+                };
+                entry.MaxStacks.SettingChanged += (_, _) =>
+                {
+                    entry.ActiveMax = entry.MaxStacks.Value;
+                    if (Photon.Pun.PhotonNetwork.InRoom && Photon.Pun.PhotonNetwork.IsMasterClient)
+                        SettingsSyncer.Instance?.PushHostSettingsExternal();
+                };
             }
         }
 
@@ -153,6 +168,107 @@ namespace UpgradeLimiter
                 e.ActiveEnabled = e.Enabled.Value;
                 e.ActiveMax = e.MaxStacks.Value;
             }
+        }
+    }
+
+    internal class SettingsSyncer : UnityEngine.MonoBehaviour
+    {
+        internal static SettingsSyncer? Instance;
+
+        private bool _wasInRoom;
+        private bool _wasMaster;
+        private float _pollDelay;
+
+        // Cache last-pushed values so SettingChanged spam (REPOConfig autosave fires identical
+        // change events repeatedly) doesn't broadcast Photon updates every few seconds.
+        private readonly Dictionary<string, (bool en, int max)> _lastPushed = new();
+
+        private void Awake() => Instance = this;
+        private void Start() => Plugin.Log.LogInfo("[Sync] SettingsSyncer ready (polling mode)");
+
+        private void Update()
+        {
+            bool inRoom = Photon.Pun.PhotonNetwork.InRoom;
+            bool master = inRoom && Photon.Pun.PhotonNetwork.IsMasterClient;
+
+            if (inRoom && !_wasInRoom)
+            {
+                if (master) PushHostSettings();
+                else        PullHostSettings();
+            }
+            else if (!inRoom && _wasInRoom)
+            {
+                Plugin.ResetActiveToLocal();
+                Plugin.Log.LogInfo("[Sync] Left room — reset to local config");
+            }
+            else if (inRoom && master && !_wasMaster)
+            {
+                PushHostSettings();
+            }
+            else if (inRoom && !master)
+            {
+                _pollDelay -= UnityEngine.Time.unscaledDeltaTime;
+                if (_pollDelay <= 0f) { _pollDelay = 1f; PullHostSettings(); }
+            }
+
+            _wasInRoom = inRoom;
+            _wasMaster = master;
+        }
+
+        internal void PushHostSettingsExternal()
+        {
+            if (!Photon.Pun.PhotonNetwork.InRoom || !Photon.Pun.PhotonNetwork.IsMasterClient) return;
+            PushHostSettings();
+        }
+
+        private void PushHostSettings()
+        {
+            if (Photon.Pun.PhotonNetwork.CurrentRoom == null) return;
+            if (!Plugin.SyncToClients.Value)
+            {
+                // Host opted out — make sure we don't leave stale keys behind from a prior session.
+                // Photon doesn't expose a clean "delete key" API short of setting null, which most
+                // SDK versions accept. If a stale key persists, clients will keep using their last
+                // pull; acceptable degradation.
+                Plugin.ResetActiveToLocal();
+                return;
+            }
+
+            var props = new ExitGames.Client.Photon.Hashtable();
+            bool changed = false;
+            foreach (var e in UpgradeRegistry.Entries)
+            {
+                bool en = e.Enabled.Value;
+                int max = e.MaxStacks.Value;
+                if (_lastPushed.TryGetValue(e.Name, out var last) && last.en == en && last.max == max)
+                    continue;
+                _lastPushed[e.Name] = (en, max);
+                props["UL_" + e.Name + "_E"] = en;
+                props["UL_" + e.Name + "_M"] = max;
+                changed = true;
+            }
+
+            Plugin.ResetActiveToLocal();
+            if (!changed) return;
+
+            Photon.Pun.PhotonNetwork.CurrentRoom.SetCustomProperties(props);
+            Plugin.Log.LogInfo($"[Sync] Host pushed {props.Count / 2} upgrade limit settings");
+        }
+
+        private void PullHostSettings()
+        {
+            var props = Photon.Pun.PhotonNetwork.CurrentRoom?.CustomProperties;
+            if (props == null) return;
+
+            bool any = false;
+            foreach (var e in UpgradeRegistry.Entries)
+            {
+                string ke = "UL_" + e.Name + "_E";
+                string km = "UL_" + e.Name + "_M";
+                if (props.ContainsKey(ke)) { e.ActiveEnabled = (bool)props[ke]; any = true; }
+                if (props.ContainsKey(km)) { e.ActiveMax = (int)props[km]; any = true; }
+            }
+            if (any) Plugin.Log.LogInfo("[Sync] Pulled host upgrade-limit settings from room properties");
         }
     }
 
