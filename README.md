@@ -1,5 +1,9 @@
 # UpgradeLimiter
 
+> ## 📦 This repo is archived.
+> **UpgradeLimiter has moved to the [REPOsitory monorepo](https://github.com/darkharasho/REPOsitory/tree/main/mods/upgrade-limiter).**
+> All future development, issues, and releases live there.
+
 A R.E.P.O. mod that caps how many of each player upgrade can be stacked. Each upgrade has its own enable toggle and max-stacks value.
 
 When a player tries to consume an upgrade past the cap, the upgrade crystal is consumed normally but the stat does not increase. Decrements and resets pass through unchanged.
